@@ -22,7 +22,7 @@ ARQUIVO_SAIDA = "dados_ibovespa_bruto.xlsx"
 
 def buscar_precos_diarios(ticker: str) -> pd.DataFrame:
     ativo = yf.Ticker(ticker)
-   
+
     hist = ativo.history(start=DATA_INICIO, end=DATA_FIM, interval="1d", auto_adjust=False)
 
     if hist.empty:
@@ -69,7 +69,6 @@ def buscar_demonstrativos_anuais(ticker: str) -> pd.DataFrame:
     )
     ativo_total = pegar_linha(bp, ["Total Assets", "TotalAssets"])
 
-    # 1. Tenta buscar no balance_sheet com mais variações conhecidas da API
     acoes_por_ano = pegar_linha(
         bp,
         [
@@ -83,7 +82,6 @@ def buscar_demonstrativos_anuais(ticker: str) -> pd.DataFrame:
         ],
     )
 
-    # 2. Tenta buscar o histórico de quantidade de ações via get_shares_full se a busca no balanço falhar
     serie_historica_acoes = None
     if acoes_por_ano.empty:
         try:
@@ -92,26 +90,28 @@ def buscar_demonstrativos_anuais(ticker: str) -> pd.DataFrame:
             serie_historica_acoes = None
 
     acoes_fallback = ativo.info.get("sharesOutstanding", None)
-    anos = sorted(set(receita.index.tolist() + lucro_liquido.index.tolist()))
+
+    ano_atual_corrido = datetime.today().year
+    anos = [col for col in dre.columns if pd.to_datetime(col).year < ano_atual_corrido]
 
     linhas = []
     for ano_col in anos:
         ano = pd.to_datetime(ano_col).year
         acoes_ano = None
 
-        # Prioridade 1: Balanço Patrimonial
         if not acoes_por_ano.empty and ano_col in acoes_por_ano.index:
             acoes_ano = acoes_por_ano.get(ano_col)
-        
-        # Prioridade 2: Histórico completo de ações (pega o valor mais próximo do fim do ano)
+
         elif serie_historica_acoes is not None and not serie_historica_acoes.empty:
             dados_ano = serie_historica_acoes[serie_historica_acoes.index.year == ano]
             if not dados_ano.empty:
                 acoes_ano = dados_ano.iloc[-1]
 
-        # Prioridade 3: Snapshot atual (Fallback)
         if pd.isna(acoes_ano) or acoes_ano is None:
             acoes_ano = acoes_fallback
+
+        if ticker in ["PETR4.SA", "PETR3.SA"] and acoes_ano and acoes_ano > 8_000_000_000:
+            acoes_ano = acoes_ano / 2
 
         linhas.append(
             {
@@ -139,10 +139,8 @@ def buscar_dividendos(ticker: str) -> pd.DataFrame:
     divs = divs.reset_index()
     divs.columns = ["Data", "ValorDividendo"]
     divs["Ticker"] = ticker
-    
-   
-    divs["Data"] = pd.to_datetime(divs["Data"]).dt.tz_localize(None)
 
+    divs["Data"] = pd.to_datetime(divs["Data"]).dt.tz_localize(None)
 
     data_corte = pd.to_datetime("2022-01-01")
     divs = divs[divs["Data"] >= data_corte]
